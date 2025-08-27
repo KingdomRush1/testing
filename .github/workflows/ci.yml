@@ -33,23 +33,63 @@ jobs:
     # Start ngrok tunnel and keep session alive
     - name: Start RDP Tunnel
       run: |
-        # Start ngrok tunnel in background
+        # Start ngrok tunnel in background and capture output
         Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp", "3389" -WindowStyle Hidden
-        Start-Sleep -Seconds 10
+        Start-Sleep -Seconds 15
         
-        Write-Host "=== RDP TUNNEL ACTIVE ==="
-        Write-Host "RDP tunnel is now available!"
-        Write-Host "Check ngrok dashboard or logs for connection details"
-        Write-Host "Username: runneradmin"
-        Write-Host "Password: P@ssw0rd!"
-        Write-Host "=========================="
+        # Get ngrok tunnel info
+        try {
+          $ngrokApi = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction Stop
+          $tunnelUrl = $ngrokApi.tunnels[0].public_url
+          Write-Host "=== RDP TUNNEL ACTIVE ==="
+          Write-Host "Tunnel URL: $tunnelUrl"
+          Write-Host "Username: runneradmin"
+          Write-Host "Password: P@ssw0rd!"
+          Write-Host "=========================="
+        } catch {
+          Write-Host "Could not get tunnel URL from API, check ngrok dashboard"
+          Write-Host "=== RDP TUNNEL ACTIVE ==="
+          Write-Host "Check ngrok dashboard for connection details"
+          Write-Host "Username: runneradmin"
+          Write-Host "Password: P@ssw0rd!"
+          Write-Host "=========================="
+        }
         
-        # Keep the session alive until GitHub Actions stops it
+        # Keep the session alive with more frequent checks
         $startTime = Get-Date
         while ($true) {
-          Start-Sleep -Seconds 300  # Sleep for 5 minutes
+          Start-Sleep -Seconds 180  # Check every 3 minutes instead of 5
           $elapsed = (Get-Date) - $startTime
-          Write-Host "RDP session active... Elapsed time: $($elapsed.ToString('hh\:mm\:ss'))"
+          
+          # Check if ngrok is still running
+          $ngrokProcess = Get-Process -Name "ngrok" -ErrorAction SilentlyContinue
+          if ($ngrokProcess) {
+            Write-Host "RDP session active... Elapsed time: $($elapsed.ToString('hh\:mm\:ss')) | Ngrok PID: $($ngrokProcess.Id)"
+            
+            # Try to get current tunnel status
+            try {
+              $ngrokStatus = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction SilentlyContinue
+              if ($ngrokStatus.tunnels.Count -gt 0) {
+                Write-Host "Tunnel status: Connected"
+              } else {
+                Write-Host "Warning: No active tunnels found"
+              }
+            } catch {
+              Write-Host "Could not check tunnel status"
+            }
+          } else {
+            Write-Host "ERROR: Ngrok process not found! Attempting to restart..."
+            Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp", "3389" -WindowStyle Hidden
+            Start-Sleep -Seconds 15
+          }
+          
+          # Also check RDP service
+          $rdpService = Get-Service -Name "TermService" -ErrorAction SilentlyContinue
+          if ($rdpService -and $rdpService.Status -eq "Running") {
+            Write-Host "RDP service: Running"
+          } else {
+            Write-Host "Warning: RDP service not running properly"
+          }
         }
     
     # Stop RDP tunnel
